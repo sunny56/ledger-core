@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <NuGetAudit>false</NuGetAudit>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+</Project>

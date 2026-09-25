@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LedgerCore.Application/LedgerCore.Application.csproj" />
+    <Project Path="src/LedgerCore.Domain/LedgerCore.Domain.csproj" />
+    <Project Path="src/LedgerCore.Infrastructure/LedgerCore.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LedgerCore.ConcurrencyTests/LedgerCore.ConcurrencyTests.csproj" />
+  </Folder>
+</Solution>

@@ -67,8 +67,26 @@ no path in the system that produces an invalid entry in the first place.
 
 ## Idempotency
 
-Every entry carries a key, claimed before the strategy runs. There is a test that fires 800
-concurrent posts of the same key and asserts exactly one applied.
+Every entry carries a key. A test fires 800 concurrent posts of the same key and asserts
+exactly one applied.
+
+The key on its own is not enough, and two of the tests exist because of that.
+
+A client that reuses a key for a *different* entry — a recycled order id, a key built from
+something not quite unique — would be told "duplicate, you're fine" by a store that only
+matches on the key, and would then book a transfer that never ran. So the claim carries a
+fingerprint of the postings, and a key reused for different postings throws
+`IdempotencyConflictException`. The HTTP equivalent is a 409. Loud is correct here: this is
+a bug in the caller, and hiding a bug in the caller is how two systems quietly stop agreeing.
+
+The other case is a post that fails after the key is claimed. Without handing the key back,
+an overdraft rejection would permanently poison its own key and the retry would return as a
+silent duplicate. `RejectedTransfer_DoesNotPoisonItsOwnKey` pins that down.
+
+What this still does not fix: a process death between claiming the key and writing the
+postings leaves the claim behind and the money unmoved. An in-memory store cannot close that
+window. A database can, by writing the claim and the postings in one transaction, and that is
+the only real answer.
 
 ## Running it
 

@@ -1,4 +1,6 @@
+using LedgerCore.Application;
 using LedgerCore.Domain;
+using LedgerCore.Infrastructure;
 using LedgerCore.Infrastructure.Strategies;
 using Xunit;
 
@@ -62,6 +64,76 @@ public class IdempotencyTests
         Assert.Equal(harness.OpeningTotal, result.ClosingTotal);
         Assert.Equal(1_000_00 - 500, harness.Store.Read(harness.Accounts[0]).Balance);
         Assert.Equal(1_000_00 + 500, harness.Store.Read(harness.Accounts[1]).Balance);
+    }
+
+    // The failure a key-only store cannot see. A client reuses a key - a recycled
+    // order id, a key built from something not quite unique - and asks for something
+    // different. Matching on the key alone answers "duplicate, you are fine" and the
+    // caller books a transfer that never happened.
+    [Fact]
+    public void SameKey_DifferentEntry_IsRejected()
+    {
+        var harness = new LedgerHarness();
+        var service = harness.ServiceFor(new PessimisticLockStrategy(harness.Store));
+
+        Assert.True(service.Post(harness.Transfer(0, 1, 500, "reused-key")));
+
+        Assert.Throws<IdempotencyConflictException>(
+            () => service.Post(harness.Transfer(0, 1, 900, "reused-key")));
+
+        Assert.Equal(1_000_00 - 500, harness.Store.Read(harness.Accounts[0]).Balance);
+        Assert.Equal(harness.OpeningTotal, harness.Store.TotalBalance());
+    }
+
+    // Claiming the key before doing the work means a rejected transfer can take its
+    // own key down with it. The second attempt below has to fail the same way it
+    // failed the first time; coming back as a silent duplicate would tell the caller
+    // the transfer went through.
+    [Fact]
+    public void RejectedTransfer_DoesNotPoisonItsOwnKey()
+    {
+        var harness = new LedgerHarness(accountCount: 2, openingPerAccount: 1_000);
+        var service = harness.ServiceFor(new PessimisticLockStrategy(harness.Store, enforceNonNegative: true));
+
+        var entry = harness.Transfer(0, 1, 5_000, "not-enough-money");
+
+        Assert.Throws<InsufficientFundsException>(() => service.Post(entry));
+        Assert.Throws<InsufficientFundsException>(() => service.Post(entry));
+
+        Assert.Equal(harness.OpeningTotal, harness.Store.TotalBalance());
+    }
+
+    [Fact]
+    public void ReleasedKey_CanBeClaimedAgain()
+    {
+        var store = new InMemoryIdempotencyStore();
+
+        Assert.Equal(IdempotencyOutcome.Claimed, store.Claim("k", "fp"));
+        Assert.Equal(IdempotencyOutcome.Replay, store.Claim("k", "fp"));
+
+        store.Release("k");
+
+        Assert.Equal(IdempotencyOutcome.Claimed, store.Claim("k", "fp"));
+    }
+
+    // Same transfer, postings handed over in the other order. A fingerprint that
+    // depended on ordering would call this a different request and reject a retry
+    // that is in fact identical.
+    [Fact]
+    public void PostingOrder_DoesNotChangeTheFingerprint()
+    {
+        var from = new AccountId("acct-000");
+        var to = new AccountId("acct-001");
+        var amount = new Money(500, LedgerHarness.Currency);
+        var at = DateTimeOffset.UtcNow;
+
+        var forward = JournalEntry.Create("k",
+            [new Posting(from, amount.Negate()), new Posting(to, amount)], at);
+
+        var reversed = JournalEntry.Create("k",
+            [new Posting(to, amount), new Posting(from, amount.Negate())], at);
+
+        Assert.Equal(forward.Fingerprint(), reversed.Fingerprint());
     }
 }
 

@@ -22,9 +22,22 @@ public interface IAccountStore
     long TotalBalance();
 }
 
+public enum IdempotencyOutcome
+{
+    Claimed,
+    Replay
+}
+
 public interface IIdempotencyStore
 {
-    bool TryClaim(string idempotencyKey);
+    // The fingerprint is what makes this safe against key reuse. A key on its own
+    // only answers "have I seen this before". The caller needs "have I seen THIS
+    // before", which is a different question with a much worse failure mode.
+    IdempotencyOutcome Claim(string idempotencyKey, string fingerprint);
+
+    // Handing the key back after a failed post. Without this, a transfer that threw
+    // would block its own retry forever.
+    void Release(string idempotencyKey);
 }
 
 public interface IPostingStrategy

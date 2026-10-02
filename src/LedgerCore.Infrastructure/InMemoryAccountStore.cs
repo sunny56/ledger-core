@@ -98,9 +98,34 @@ public sealed class InMemoryAccountStore : IAccountStore
 
 public sealed class InMemoryIdempotencyStore : IIdempotencyStore
 {
-    private readonly ConcurrentDictionary<string, byte> _seen = new(StringComparer.Ordinal);
+    // Key to the fingerprint of whatever first claimed it. A real store would keep
+    // the original response here too, so a replay can return it instead of a bare
+    // "already done" - a client that retried never saw the first answer and still
+    // needs one. This ledger has nothing to return but success, so there is nothing
+    // to store yet.
+    private readonly ConcurrentDictionary<string, string> _claims = new(StringComparer.Ordinal);
 
-    public bool TryClaim(string idempotencyKey) => _seen.TryAdd(idempotencyKey, 0);
+    public IdempotencyOutcome Claim(string idempotencyKey, string fingerprint)
+    {
+        while (true)
+        {
+            if (_claims.TryAdd(idempotencyKey, fingerprint))
+                return IdempotencyOutcome.Claimed;
 
-    public int Count => _seen.Count;
+            if (_claims.TryGetValue(idempotencyKey, out var existing))
+            {
+                if (!string.Equals(existing, fingerprint, StringComparison.Ordinal))
+                    throw new IdempotencyConflictException(idempotencyKey);
+
+                return IdempotencyOutcome.Replay;
+            }
+
+            // Released between the add and the read. Rare, and the only correct
+            // response is to go round again and try to claim it properly.
+        }
+    }
+
+    public void Release(string idempotencyKey) => _claims.TryRemove(idempotencyKey, out _);
+
+    public int Count => _claims.Count;
 }

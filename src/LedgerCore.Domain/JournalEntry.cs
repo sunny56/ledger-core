@@ -44,6 +44,20 @@ public sealed class JournalEntry
     }
 
     public IEnumerable<AccountId> TouchedAccounts => Postings.Select(p => p.Account).Distinct();
+
+    // Two requests carrying the same idempotency key have to be the same request.
+    // Clients reuse keys more often than anyone expects - an order id recycled after
+    // a cancellation, a key derived from something not quite unique - and without
+    // this the second, different request is told it succeeded when it never ran.
+    //
+    // Ordered so that the postings arriving in a different sequence still fingerprint
+    // the same. Deliberately not hashed: this is compared, never transmitted, and a
+    // readable value is worth more in a log than a shorter one.
+    public string Fingerprint() => string.Join(
+        "|",
+        Postings
+            .Select(p => $"{p.Account}:{p.Amount.MinorUnits}:{p.Amount.Currency}")
+            .OrderBy(s => s, StringComparer.Ordinal));
 }
 
 public sealed class UnbalancedEntryException(string message) : InvalidOperationException(message);
@@ -53,3 +67,8 @@ public sealed class InsufficientFundsException(AccountId account, long balance, 
 
 public sealed class ConcurrencyRetriesExhaustedException(int attempts)
     : InvalidOperationException($"Gave up after {attempts} optimistic retries.");
+
+// The HTTP equivalent is 409. Loud on purpose: this is a bug in the caller, and
+// hiding a bug in the caller is how two systems quietly stop agreeing.
+public sealed class IdempotencyConflictException(string idempotencyKey)
+    : InvalidOperationException($"Key '{idempotencyKey}' was already used for a different entry.");
